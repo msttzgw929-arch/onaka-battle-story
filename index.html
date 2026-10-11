@@ -359,8 +359,22 @@ void main(){
       float bl = clamp(hs * 0.06, 0.3, 1.1);
       oc = oc * 0.4 + (samp(src + vec2(bl, 0.0)) + samp(src - vec2(bl, 0.0)) + samp(src + vec2(0.0, bl)) + samp(src - vec2(0.0, bl))) * 0.15;
     }
-    vec4 fill = samp(vec2(C.x, C.y - R.y * 0.3)); fill = vec4(fill.rgb / max(fill.a, 0.01), 1.0);
+    // average dress colour of the belly (5 taps) -> used as fill and as the smooth fabric base at huge sizes
+    vec4 fa = samp(vec2(C.x, C.y - R.y * 0.3)) + samp(C + vec2(-0.45, -0.1) * R) + samp(C + vec2(0.45, -0.1) * R) + samp(C + vec2(-0.25, 0.45) * R) + samp(C + vec2(0.25, 0.45) * R);
+    vec4 fill = vec4(fa.rgb / max(fa.a, 0.01), 1.0);
     vec4 L = oc + fill * (1.0 - oc.a);
+    {
+      // at huge sizes the magnified source texture turns into big smears: blend to smooth procedural fabric,
+      // keeping a little of the low-frequency source tone and the real navel
+      vec2 nv = uu - vec2(-0.07, 0.26);   // where the real navel lands (bulge-adjusted)
+      float navel = exp(-dot(nv, nv) / 0.012);
+      float wP = smoothstep(2.5, 10.0, hs) * 0.82 * (1.0 - navel);
+      float lumS = dot(L.rgb, vec3(0.3, 0.55, 0.15)), lumF = dot(fill.rgb, vec3(0.3, 0.55, 0.15));
+      vec3 proc = fill.rgb * mix(1.0, clamp(lumS / max(lumF, 0.02), 0.75, 1.25), 0.35);
+      L.rgb = mix(L.rgb, proc, wP);
+      // procedural navel dimple once the texture is mostly replaced
+      
+    }
     // fabric shading of a round, heavy belly (keeps the dress colour; light from upper-left)
     vec3 n = normalize(vec3(uu.x * 0.9, uu.y * 0.8, sqrt(max(0.0, 1.0 - ee)) + 0.08));
     vec3 Ld = normalize(vec3(-0.45, -0.6, 0.66));
@@ -381,21 +395,28 @@ void main(){
       L.rgb *= 1.0 - 0.3 * kD * fold * nearTop;
       L.rgb += vec3(1.0) * 0.07 * kD * pow(abs(sin(ang * 7.0 + 0.6 + sin(ang * 3.1) * 0.9)), 10.0) * nearTop;
       // two soft curved stretch highlights following the round surface (upper-left)
-      float band1 = exp(-pow((e - 0.62) / 0.05, 2.0)) * smoothstep(0.1, -0.6, uu.x + uu.y * 0.6) * step(uu.y, 0.2);
-      float band2 = exp(-pow((e - 0.42) / 0.035, 2.0)) * smoothstep(0.0, -0.5, uu.x + uu.y * 0.4) * step(uu.y, 0.0);
+      float band1 = exp(-pow((e - 0.62) / 0.05, 2.0)) * smoothstep(0.1, -0.6, uu.x + uu.y * 0.6) * smoothstep(0.35, 0.0, uu.y);
+      float band2 = exp(-pow((e - 0.42) / 0.035, 2.0)) * smoothstep(0.0, -0.5, uu.x + uu.y * 0.4) * smoothstep(0.15, -0.15, uu.y);
       L.rgb += vec3(1.0, 0.97, 0.99) * (band1 * 0.09 + band2 * 0.06) * kD;
-      float gr = fract(sin(dot(floor(src * 1.7), vec2(12.9898, 78.233))) * 43758.5453);
-      L.rgb *= 1.0 + (gr - 0.5) * 0.035 * kD;
+      // very soft large-scale fabric undulation (continuous, no cells)
+      L.rgb *= 1.0 + 0.025 * kD * sin(uu.x * 9.0 + sin(uu.y * 7.0) * 1.3) * sin(uu.y * 6.0 + uu.x * 2.0);
       // under-curve: the heavy lower half turns away from the light
       L.rgb *= 1.0 - 0.18 * kD * smoothstep(0.2, 0.95, uu.y) * smoothstep(0.3, 1.0, e);
     }
+    // signed distance (px) to the silhouette; where it rests on the floor, round the contact (smooth intersection with the floor plane)
+    vec2 ge = uu / (Rb * max(e, 1e-4)); float dE = (e - 1.0) / max(length(ge), 1e-6);
+    float dF = pPre.y - u_hang.y; float kc = clamp(Rb.y * 0.18, 10.0, 160.0);
+    float hh = max(kc - abs(dE - dF), 0.0) / kc; float dS = max(dE, dF) + hh * hh * kc * 0.25;
+    float fwp = max(fwidth(dS), 1e-3);
+    float contact = exp(-max(0.0, u_hang.y - pPre.y) / max(kc * 0.6, 8.0)) * step(u_hang.y - Rb.y * 2.0, pPre.y) * smoothstep(0.0, 0.5, uu.y);
+    L.rgb *= 1.0 - 0.38 * contact * kS;     // darker where it presses onto the floor
     float fw = max(fwidth(e), 1e-4);
     float lineK = kS * mix(0.35, 0.9, max(smoothstep(0.0, 0.5, uu.y), 1.0 - base.a));
-    float line = 1.0 - smoothstep(fw * 0.7, fw * 2.6, 1.0 - e);
+    float line = 1.0 - smoothstep(fwp * 0.7, fwp * 2.6, -dS);
     L.rgb = mix(L.rgb, vec3(0.07, 0.05, 0.07), line * lineK);
     // seamless join under the bust: fade into the original body where it is dress, keep the silhouette elsewhere
     float topF = mix(1.0, smoothstep(t0 + 2.0, t0 + 26.0, pPre.y), base.a * (1.0 - smoothstep(0.5, 0.85, abs(uu.x))) * step(uu.y, 0.0));
-    float m = (1.0 - smoothstep(1.0 - fw, 1.0 + fw, e)) * topF * (1.0 - smoothstep(u_hang.y - 1.5, u_hang.y + 1.5, pPre.y));
+    float m = (1.0 - smoothstep(-fwp, fwp, dS)) * topF;
     // soft shadow of the overhang on the hips / thighs below it
     float shd = (1.0 - smoothstep(1.0, 1.0 + 0.2 / max(1.0, sh.y * 0.6), e)) * smoothstep(0.15, 0.7, uu.y) * step(1.0, e) * 0.5 * kS;
     col.rgb *= 1.0 - shd;
