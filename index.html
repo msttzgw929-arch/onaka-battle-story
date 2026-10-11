@@ -242,7 +242,7 @@ vec2 hangShape(float s){
   if (s < 1.0) { float t = s; hw = mix(86.0, 172.0, t * (2.0 - t)); bt = mix(415.4, 440.0, t); }
   else if (s < 2.0) { hw = mix(172.0, 180.0, s - 1.0); bt = mix(440.0, 495.0, s - 1.0); }
   else if (s < 3.0) { hw = mix(180.0, 195.0, s - 2.0); bt = mix(495.0, 545.0, s - 2.0); }
-  else { hw = 195.0 + 30.0 * (s - 3.0) + 45.0 * max(0.0, s - 13.3); bt = 545.0 + 45.0 * (s - 3.0); }
+  else { hw = 195.0 + 30.0 * (s - 3.0) + 22.0 * max(0.0, s - 13.3); bt = 545.0 + 45.0 * (s - 3.0); }
   return vec2(hw / 86.0, (bt - 267.4) / 148.0);
 }
 vec2 rot2(vec2 d, float a){ return vec2(cos(a)*d.x - sin(a)*d.y, sin(a)*d.x + cos(a)*d.y); }
@@ -339,12 +339,16 @@ void main(){
     vec2 Rs = R * sh; vec2 Cs = vec2(C.x, t0 + Rs.y);
     // same jiggle/anchor transform as the base belly warp so it is seamless at small sizes
     vec2 Cb = A + u_belly.zw + (Cs - A) * u_belly.xy; vec2 Rb = Rs * u_belly.xy;
-    vec2 uu = (pPre - Cb) / Rb; float e = length(uu);
+    vec2 uu = (pPre - Cb) / Rb;
+    // heavier sag: narrower near the top join, fuller toward the bottom
+    float sag = 0.13 * smoothstep(0.8, 4.0, hs);
+    uu.x /= 1.0 + sag * clamp(uu.y, -1.0, 1.0);
+    float e = length(uu);
     float ee = min(e * e, 1.0);
     vec2 src = C + uu * R * (1.0 - u_belly2.x * (1.0 - ee) * (1.0 - ee));
     vec4 oc = samp(src);
     if (hs > 2.0) { // magnified fabric: soften texel noise / specks
-      float bl = clamp(hs * 0.12, 0.3, 2.2);
+      float bl = clamp(hs * 0.06, 0.3, 1.1);
       oc = oc * 0.4 + (samp(src + vec2(bl, 0.0)) + samp(src - vec2(bl, 0.0)) + samp(src + vec2(0.0, bl)) + samp(src - vec2(0.0, bl))) * 0.15;
     }
     vec4 fill = samp(vec2(C.x, C.y - R.y * 0.3)); fill = vec4(fill.rgb / max(fill.a, 0.01), 1.0);
@@ -358,6 +362,25 @@ void main(){
     float spec = pow(max(dot(reflect(-Ld, n), vec3(0.0, 0.0, 1.0)), 0.0), 18.0);
     L.rgb += vec3(1.0, 0.96, 0.98) * spec * 0.2 * kS;
     L.rgb *= 1.0 - 0.3 * kS * smoothstep(0.8, 1.0, e) * smoothstep(-0.6, 0.6, uu.y);   // occlusion toward the lower rim
+    // fabric detail: pull-folds radiating from the join under the bust + stretch sheen bands + fine grain
+    {
+      float kD = kS * smoothstep(0.6, 3.0, hs);
+      vec2 tp = pPre - vec2(Cb.x, t0);
+      float ang = atan(tp.x, max(tp.y, 1.0));
+      float dTop = pPre.y - t0;   // pull-folds live in a fixed ~90px band right under the bust, whatever the size
+      float nearTop = smoothstep(4.0, 18.0, dTop) * (1.0 - smoothstep(40.0, 95.0, dTop)) * (1.0 - smoothstep(0.35, 0.8, abs(tp.x) / max(Rb.x, 1.0) * 1.6));
+      float fold = pow(abs(sin(ang * 7.0 + sin(ang * 3.1) * 0.9)), 6.0);
+      L.rgb *= 1.0 - 0.3 * kD * fold * nearTop;
+      L.rgb += vec3(1.0) * 0.07 * kD * pow(abs(sin(ang * 7.0 + 0.6 + sin(ang * 3.1) * 0.9)), 10.0) * nearTop;
+      // two soft curved stretch highlights following the round surface (upper-left)
+      float band1 = exp(-pow((e - 0.62) / 0.05, 2.0)) * smoothstep(0.1, -0.6, uu.x + uu.y * 0.6) * step(uu.y, 0.2);
+      float band2 = exp(-pow((e - 0.42) / 0.035, 2.0)) * smoothstep(0.0, -0.5, uu.x + uu.y * 0.4) * step(uu.y, 0.0);
+      L.rgb += vec3(1.0, 0.97, 0.99) * (band1 * 0.09 + band2 * 0.06) * kD;
+      float gr = fract(sin(dot(floor(src * 1.7), vec2(12.9898, 78.233))) * 43758.5453);
+      L.rgb *= 1.0 + (gr - 0.5) * 0.035 * kD;
+      // under-curve: the heavy lower half turns away from the light
+      L.rgb *= 1.0 - 0.18 * kD * smoothstep(0.2, 0.95, uu.y) * smoothstep(0.3, 1.0, e);
+    }
     float fw = max(fwidth(e), 1e-4);
     float lineK = kS * mix(0.35, 0.9, max(smoothstep(0.0, 0.5, uu.y), 1.0 - base.a));
     float line = 1.0 - smoothstep(fw * 0.7, fw * 2.6, 1.0 - e);
@@ -389,7 +412,7 @@ const RIGS = {
   midori:  { eyeL: [235.5, 69, 9.2, 5.0], eyeR: [268, 68.5, 9.2, 5.0], mouth: [242, 88.5, 266, 87.5], misc: [7.0, 128, 6, 4], bel: [242, 453, 113, 101, 375] },
   erika:   { eyeL: [235.5, 65.5, 9.6, 5.2], eyeR: [268, 64.8, 9.2, 5.0], mouth: [244.5, 86.5, 264.5, 86.5], misc: [7.5, 125, 6, 4], bel: [242, 453, 113, 101, 375] },
   luna:    { eyeL: [236, 67.2, 10.2, 6.6], eyeR: [269, 66.8, 10.2, 6.6], mouth: [243, 88.5, 264, 88.5], misc: [9.0, 128, 4, 4], bel: [242, 451, 113, 101, 374] },
-  nocty:   { eyeL: [238.5, 65, 8.2, 4.2], eyeR: [267, 65, 8.6, 4.2], mouth: [247, 85.5, 264, 85], misc: [7.0, 122, 0, 0], bel: [240, 446, 112, 80, 372], pad: [240, 20, 10], hangDark: 0.3 },
+  nocty:   { eyeL: [238.5, 65, 8.2, 4.2], eyeR: [267, 65, 8.6, 4.2], mouth: [247, 85.5, 264, 85], misc: [7.0, 122, 0, 0], bel: [240, 446, 112, 80, 372], pad: [240, 20, 10], hangDark: 0.42 },
 };
 class Spring { constructor(k, d){ this.k=k; this.d=d; this.x=0; this.v=0; this.target=0; }
   step(dt){ const a = -this.k*(this.x-this.target) - this.d*this.v; this.v += a*dt; this.x += this.v*dt; } }
@@ -399,7 +422,7 @@ function hangShape(s){ let hw, bt;
   if (s < 1) { const t = s; hw = 86 + (172 - 86) * t * (2 - t); bt = 415.4 + (440 - 415.4) * t; }
   else if (s < 2) { hw = 172 + 8 * (s - 1); bt = 440 + 55 * (s - 1); }
   else if (s < 3) { hw = 180 + 15 * (s - 2); bt = 495 + 50 * (s - 2); }
-  else { hw = 195 + 30 * (s - 3) + 45 * Math.max(0, s - 13.3); bt = 545 + 45 * (s - 3); }
+  else { hw = 195 + 30 * (s - 3) + 22 * Math.max(0, s - 13.3); bt = 545 + 45 * (s - 3); }
   return [hw / 86, (bt - 267.4) / 148]; }
 function hangLevel(c){ if (c.careS != null) return Math.max(0, c.careS); const st = Math.max(0, c.stage), t = c.hang;
   if (!t) return st; const i0 = Math.min(t.length - 2, Math.floor(st)), f = st - i0; return t[i0] + (t[i0+1] - t[i0]) * f; }
@@ -479,7 +502,7 @@ class Renderer {
     
     gl.uniform4fv(u.u_eyeL, rig.eyeL); gl.uniform4fv(u.u_eyeR, rig.eyeR); gl.uniform4fv(u.u_mouth, rig.mouth); gl.uniform4fv(u.u_misc, rig.misc); gl.uniform1i(u.u_tex, 0);
     gl.uniform2f(u.u_res, this.W, this.H); gl.uniform2f(u.u_ts, IMG_W, IMG_H); gl.uniform3fv(u.u_tsz, (this.tsz && this.tsz[c.tex]) || [IMG_W, IMG_H, 0]);
-    const hb = hangBlob(c); gl.uniform4f(u.u_xf, c.x + c.offX, c.y + c.offY - hb.lift * c.scale, c.scale, c.rot); gl.uniform2f(u.u_sq, c.sqx, c.sqy); gl.uniform1f(u.u_flip, c.flip);
+    const hb = hangBlob(c); gl.uniform4fv(u.u_world, c.screenSpace ? [640, 690, 1, 0] : this.world); gl.uniform4f(u.u_xf, c.x + c.offX, c.y + c.offY - hb.lift * c.scale, c.scale, c.rot); gl.uniform2f(u.u_sq, c.sqx, c.sqy); gl.uniform1f(u.u_flip, c.flip);
     const st = Math.max(0, c.stage);
     const breath = Math.sin(c.t * 2.1);
     const hs = hangLevel(c), sh = hangShape(hs);
@@ -840,7 +863,7 @@ const RIVALS = [
 const BOSS = { id: 'nocty', name: '腹神ノクティア', title: '世界を包む終焉の腹神', rank: 'FINAL', hp: 1000, atk: 34, def: 30, boss: true, final: true,
   theme: { c1: '#ff1744', c2: '#16000a' }, aura: 'rgba(255,40,80,A)',
   moves: [{ n: '神腹圧殺', pow: 26, acc: 92, v: 'atk1' }, { n: '魅惑の微笑み', pow: 18, acc: 100, v: 'atk2' }], sp: { n: '終焉のベリー・エクリプス', pow: 46 } };
-const BOSS_CFG = { hang: [0, 16, 32, 60, 100, 180], wing: true, jig: 2.2, bulge: 0.1 };
+const BOSS_CFG = { hang: [0, 18, 26, 34, 48, 70], wing: true, jig: 2.2, bulge: 0.1 };
 const CHAMP_CFG = { hang: [0, 4, 8.5, 14.5], bulge: 0.1, jig: 1.7 };
 const ALLIES = [
   { id: 'lala', n: '桃瀬ララ', d: '追撃・威力60', pow: 60 },
@@ -933,15 +956,25 @@ function tween(o, props, dur, ease){
 const EASE = { io: t => t < .5 ? 2*t*t : 1 - Math.pow(-2*t + 2, 2)/2, out: t => 1 - Math.pow(1 - t, 3), in: t => t*t*t, back: t => { const c = 1.7; return 1 + (c+1)*Math.pow(t-1,3) + c*Math.pow(t-1,2); }, lin: t => t };
 function flash(a, ms){ flashEl.style.transition = 'none'; flashEl.style.opacity = a; requestAnimationFrame(() => { flashEl.style.transition = `opacity ${ms||300}ms`; flashEl.style.opacity = 0; }); }
 function shake(a){ G.shake = Math.max(G.shake, a); if (G.frame && a >= 8) G.punch = Math.min(0.07, Math.max(G.punch || 0, a / 650)); }
-function bellyPos(c){ const s = c.scale, h = hangBlob(c); return { x: c.x + c.offX + (h.cx - 245) * s * c.flip, y: c.y + c.offY - (1342 - Math.min(1300, h.cy + h.ry * 0.25)) * s }; }
-function headPos(c){ const s = c.scale, l = hangBlob(c).lift; return { x: c.x + c.offX + (253 - 245) * s * c.flip, y: c.y + c.offY - (1342 - 60 + l) * s }; }
+function ssToWorld(p){ const w = G.wz || 1; return { x: 640 + (p.x - 640) / w, y: 690 + (p.y + (G.wy || 0) - 690) / w }; }
+function bellyPos(c){ if (c.screenSpace) { const q = Object.assign({}, c, { screenSpace: false }); Object.setPrototypeOf(q, Object.getPrototypeOf(c)); return ssToWorld(bellyPos(q)); } const s = c.scale, h = hangBlob(c); return { x: c.x + c.offX + (h.cx - 245) * s * c.flip, y: c.y + c.offY - (1342 - Math.min(1300, h.cy + h.ry * 0.25)) * s }; }
+function headPos(c){ if (c.screenSpace) { const q = Object.assign({}, c, { screenSpace: false }); Object.setPrototypeOf(q, Object.getPrototypeOf(c)); return ssToWorld(headPos(q)); } const s = c.scale, l = hangBlob(c).lift; return { x: c.x + c.offX + (253 - 245) * s * c.flip, y: c.y + c.offY - (1342 - 60 + l) * s }; }
 // camera framing for the giant boss: keep her face + the whole swelling belly above the textbox
 // ---- close-up camera: frame every visible woman from the head down to below the lower belly (thighs),
 // as large as the free area between the HUD and the bottom panel allows; pulls back only as bellies grow.
 function frameBox(c){ const h = hangBlob(c), sc = c.scale, IH = 1342, wy_ = yi => c.y + (c.offY || 0) - (IH - yi) * sc;
+  if (hangLevel(c) > 16) { // colossal: frame her head, bust and wings above the belly; the belly runs off the bottom and sides
+    const top = wy_(10 - h.lift), bt = wy_(h.top); return { top, bot: bt + (bt - top) * 1.25, left: c.x - 330 * sc, right: c.x + 330 * sc }; }
   const top = wy_(38 - h.lift), bot = Math.max(wy_(h.cy + Math.max(h.ry, 0) + 85), wy_(Math.min(h.bot, 1334) + 18));
   const halfW = Math.max(160, Math.min(h.rx * 1.06, (h.bot - h.top + 300) * 0.95)) * sc; /* giant ones may spill past the screen sides */ return { top, bot, left: c.x - halfW, right: c.x + halfW }; }
+// when the final boss becomes colossal, the heroine steps into the near foreground (lower-left, partly cropped)
+function fgHero(){
+  const big = G.scene === 'battle' && rival && rival.hang && G.chars.includes(rival) && hangLevel(rival) > (hero.screenSpace ? 12 : 16);
+  if (big && !hero.screenSpace) { hero._ws = { x: hero.x, y: hero.y, scale: hero.scale }; Object.assign(hero, { screenSpace: true, frameIgnore: true, x: 215, y: 1060, scale: 0.6, alpha: 0 }); tween(hero, { alpha: 1 }, 0.5, 'out'); }
+  else if (!big && hero.screenSpace) { Object.assign(hero, { screenSpace: false, frameIgnore: false }, hero._ws || {}); hero.alpha = 1; }
+}
 function autoFrame(dt){
+  fgHero();
   let tz = 1, ty = 0; const F = G.frame;
   if (F) {
     const cs = G.chars.filter(c => c.visible && c.alpha > 0.3 && !c.frameIgnore);
@@ -1004,11 +1037,11 @@ function frame(now){
     G.parts.push({ x: p.x, y: p.y, vx: rnd(-14, 14), vy: rnd(-26, -6), life: rnd(1.6, 3), max: 3, type: 'dot', color: Math.random() < 0.8 ? '#140a16' : '#3a1030', size: rnd(2.5, 6.5) * Math.max(0.5, G.wz), rot: 0, vr: 0, g: -0.01 });
   }
   const wz = G.wz || 1, wy = G.wy || 0; bgx.setTransform(1,0,0,1,0,0);
-  if (Math.abs(wz - 1) > 0.001 || Math.abs(wy) > 0.5) { if (G.bg !== 'room') { BG.draw(bgx, G.bg || 'title', G.t, { theme: G.theme }); bgx.fillStyle = wz < 0.999 ? 'rgba(10,0,8,0.72)' : 'rgba(10,0,8,0.25)'; bgx.fillRect(0,0,1280,720); } bgx.setTransform(wz, 0, 0, wz, 640*(1-wz), 690*(1-wz) - wy); }
+  if (Math.abs(wz - 1) > 0.001 || Math.abs(wy) > 0.5) { if (G.bg !== 'room') { const gr = bgx.createLinearGradient(0, 0, 0, 720); gr.addColorStop(0, '#0d0510'); gr.addColorStop(1, '#22101e'); bgx.fillStyle = gr; bgx.fillRect(0,0,1280,720); } bgx.setTransform(wz, 0, 0, wz, 640*(1-wz), 690*(1-wz) - wy); }
   BG.draw(bgx, G.bg || 'title', G.t, { theme: G.theme });
   if (G.crack > 0.01) BG.cracks(bgx, G.crack);
   for (const a of G.auras) BG.aura(bgx, a.c.x + a.c.offX, a.c.y - 330, a.color, G.t, a.k);
-  for (const c of G.chars) if (c.visible && c.shadow !== false) BG.shadow(bgx, c.x + c.offX, c.y - 4, Math.max(150 * c.scale / 0.45, hangBlob(c).rx * c.scale * 1.15), c.alpha);
+  for (const c of G.chars) if (c.visible && c.shadow !== false && !c.screenSpace) BG.shadow(bgx, c.x + c.offX, c.y - 4, Math.max(150 * c.scale / 0.45, hangBlob(c).rx * c.scale * 1.15), c.alpha);
   bgx.setTransform(1,0,0,1,0,0); R.world = [640, 690, wz, wy];
   if ((G.bdN = (G.bdN || 0) + 1) % 3 === 0) { const [vw, vh] = viewSize(); if (Math.abs(vw / vh - 16 / 9) > 0.01) drawBackdrop(); }
   R.resize(G.dpr || 1); R.clear(); { const big = c => hangLevel(c) > 4 ? 0 : 1; for (const c of [...G.chars].sort((a, b) => big(a) - big(b))) R.draw(c); } // giant bellies behind, so the others stay visible
@@ -1082,11 +1115,11 @@ function playScene(id, opt){
     }
     const cast = { hero };
     if (sc.cast.length === 1) {
-      if (!opt.keepStage) { Object.assign(hero, { x: 640, y: 716, scale: 0.44, flip: 1, offX: 0, offY: 0, rot: 0, alpha: 1, visible: true, tint: [1,1,1] }); setChars([hero]); }
+      if (!opt.keepStage) { Object.assign(hero, { screenSpace: false, frameIgnore: false, x: 640, y: 716, scale: 0.44, flip: 1, offX: 0, offY: 0, rot: 0, alpha: 1, visible: true, tint: [1,1,1] }); setChars([hero]); }
     } else {
       const rid = sc.cast[1]; let rc = G.chars.find(c => c !== hero && c.tex === rid);
       if (!rc) { rc = new Character({ x: 900, y: 694, scale: 0.405, flip: -1, tex: rid, name: speakerName(rid) }); if (rivalById(rid).champ) Object.assign(rc, CHAMP_CFG); if (rid === 'nocty') Object.assign(rc, BOSS_CFG);
-        Object.assign(hero, { x: 380, y: 694, scale: 0.405, flip: 1, offX: 0, offY: 0, rot: 0, alpha: 1, visible: true }); setChars([hero, rc]); }
+        Object.assign(hero, { screenSpace: false, frameIgnore: false, x: 380, y: 694, scale: 0.405, flip: 1, offX: 0, offY: 0, rot: 0, alpha: 1, visible: true }); setChars([hero, rc]); }
       cast[rid] = rc;
     }
     const hidden = [...UI.children]; hidden.forEach(c => c.style.visibility = 'hidden');
@@ -1139,7 +1172,7 @@ function replayModal(){
 function goTitle(){
   G.frame = null; G.wz = 1; G.wy = 0; G.frameBoss = false; G.glowHold = 0; G.cmdHidden = false; G.crack = 0; G.parts = [];
   G.scene = 'title'; G.bg = 'title'; G.theme = null; G.auras = []; G.onUpdate = null; setCam(640, 360, 1, true); G.dimT = 0;
-  Object.assign(hero, { x: 330, y: 730, scale: 0.5, flip: 1, offX: 0, offY: 0, rot: 0, alpha: 1, visible: true, recolor: null, careS: null }); hero.stageTarget = 0; hero.setExpr('smile');
+  Object.assign(hero, { screenSpace: false, frameIgnore: false, x: 330, y: 730, scale: 0.5, flip: 1, offX: 0, offY: 0, rot: 0, alpha: 1, visible: true, recolor: null, careS: null }); hero.stageTarget = 0; hero.setExpr('smile');
   setChars([hero]); clearUI();
   const el = $el(`<div class="layer">
     <div class="logo" style="left:520px;right:20px;top:60px"><h1><span>お</span><span>腹</span><span>バ</span><span>ト</span><span>ル</span></h1><p>〜 彼女と目指す、お腹の頂点 〜</p></div>
@@ -1161,7 +1194,7 @@ function goTitle(){
   AudioSys.playBgm('title');
 }
 function startScreen(){
-  G.bg = 'title'; setChars([hero]); Object.assign(hero, { x: 330, y: 730, scale: 0.5 }); hero.setExpr('smile');
+  G.bg = 'title'; setChars([hero]); Object.assign(hero, { screenSpace: false, frameIgnore: false, x: 330, y: 730, scale: 0.5 }); hero.setExpr('smile');
   const el = $el(`<div class="layer" style="cursor:pointer"><div class="logo" style="left:520px;right:20px;top:60px"><h1><span>お</span><span>腹</span><span>バ</span><span>ト</span><span>ル</span></h1><p>〜 彼女と目指す、お腹の頂点 〜</p></div><div class="tap" style="left:520px">タップしてスタート</div></div>`);
   UI.appendChild(el);
   el.onclick = () => { AudioSys.unlock(); AudioSys.vol = Object.assign(AudioSys.vol, S.vol); AudioSys.applyVol(); goTitle(); hero.setExpr('happy'); hero.bounce(1); say(hero, 'h_title', { noBubble: true }).then(() => hero.setExpr('smile')); };
@@ -1220,7 +1253,7 @@ function stageFromFull(f){ return f >= 80 ? 2 : f >= 40 ? 1 : 0; }
 function goHome(greet, opt){
   G.wy = 0; G.frameBoss = false; G.glowHold = 0; G.cmdHidden = false; G.crack = 0; G.parts = [];
   G.frame = FRAMES.home; G.scene = 'home'; G.bg = 'home'; G.theme = null; G.auras = []; G.onUpdate = null; G.dimT = 0; setCam(640, 360, 1, true);
-  Object.assign(hero, { x: 640, y: 716, scale: 0.44, flip: 1, offX: 0, offY: 0, rot: 0, alpha: 1, visible: true, recolor: null, tint: [1,1,1], careS: null });
+  Object.assign(hero, { screenSpace: false, frameIgnore: false, x: 640, y: 716, scale: 0.44, flip: 1, offX: 0, offY: 0, rot: 0, alpha: 1, visible: true, recolor: null, tint: [1,1,1], careS: null });
   hero.stageTarget = Math.min(2.4, S.full / 40); setChars([hero]); hero.setExpr('smile');
   AudioSys.playBgm('home');
   const hs = opt && opt.scene ? opt.scene : (S.beaten >= 1 && S.beaten <= 4 && !(S.seen && S.seen['home_' + S.beaten]) ? 'home_' + S.beaten : null);
@@ -1372,7 +1405,7 @@ function startBattle(i){
   const st = heroStats(); const s0 = stageFromFull(S.full);
   B.h = { hp: st.hp, max: st.hp, atk: st.atk, def: st.def, stage: s0, gauge: Math.min(95, S.mas), food: 3, guard: false };
   B.r = { hp: rv.hp, max: rv.hp, atk: rv.atk, def: rv.def, stage: 0 }; B.over = false; B.turn = 0;
-  Object.assign(hero, { x: -200, y: 694, scale: 0.405, flip: 1, offX: 0, offY: 0, rot: 0, alpha: 1, visible: true, recolor: null, tint: [1,1,1] }); hero.stageTarget = s0; hero.stage = s0;
+  Object.assign(hero, { screenSpace: false, frameIgnore: false, x: -200, y: 694, scale: 0.405, flip: 1, offX: 0, offY: 0, rot: 0, alpha: 1, visible: true, recolor: null, tint: [1,1,1] }); hero.stageTarget = s0; hero.stage = s0;
   rival = new Character({ x: 1480, y: 694, scale: 0.405, flip: -1, tex: rv.id, name: rv.name });
   if (rv.champ) Object.assign(rival, CHAMP_CFG);
   if (rv.final) Object.assign(rival, BOSS_CFG);
