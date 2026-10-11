@@ -165,6 +165,14 @@ html,body{margin:0;padding:0;width:100%;height:100%;height:100dvh;overscroll-beh
 .rub-zone{position:absolute;inset:0;touch-action:none;cursor:grab}
 #roomLayer .mas-tip{bottom:14px;top:auto}
 #roomLayer .mas-tip{font-size:22px;-webkit-text-stroke:4px #c2185b;color:#fff;pointer-events:none}
+.cam-ctl{position:absolute;left:76px;bottom:14px;display:flex;gap:8px;z-index:3}
+.cam-ctl .cbtn{width:54px;height:54px;border-radius:14px;border:3px solid #ff9cbc;background:rgba(255,255,255,.9);color:#c2185b;font-size:28px;font-weight:900;cursor:pointer;box-shadow:0 4px 0 #f48fb1;touch-action:manipulation;font-family:inherit}
+.cam-ctl .cbtn.wide{width:84px;font-size:20px}
+.cam-ctl .cbtn:active{transform:translateY(3px);box-shadow:0 1px 0 #f48fb1}
+#roomLayer .mas-tip{left:160px;right:160px}
+#game.camtouch,#game.camtouch *{touch-action:none}
+#camCtl.b{left:auto;bottom:auto;right:calc(12px + env(safe-area-inset-right));top:250px;flex-direction:column;z-index:40;opacity:.85}
+#camCtl.b .cbtn{width:52px;height:52px;font-size:26px}#camCtl.b .cbtn.wide{width:52px;font-size:16px}
 </style>
 </head><body>
 <div id="wrap"><canvas id="backdrop" width="320" height="180"></canvas><div id="safe"></div><div id="game">
@@ -182,7 +190,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;height:100dvh;overscroll-beh
 const IMG_W = 491, IMG_H = 1342;
 const PAD_X = 190, PAD_TOP = 20, PAD_BOT = 10;
 const VS = `#version 300 es
-in vec2 a_uv; uniform vec2 u_res; uniform vec4 u_xf; uniform vec2 u_sq; uniform float u_flip; uniform vec4 u_box; uniform vec4 u_world;
+in vec2 a_uv; uniform vec2 u_res; uniform vec4 u_xf; uniform vec2 u_sq; uniform float u_flip; uniform vec4 u_box; uniform vec4 u_world; uniform float u_pan;
 out vec2 v_p;
 void main(){
   vec2 uv = mix(u_box.xy, u_box.zw, a_uv);
@@ -192,7 +200,7 @@ void main(){
   float c = cos(u_xf.w), s = sin(u_xf.w);
   rel = vec2(c*rel.x - s*rel.y, s*rel.x + c*rel.y);
   vec2 pos = vec2(u_xf.x, u_xf.y) + rel;
-  pos = u_world.xy + (pos - u_world.xy) * u_world.z; pos.y -= u_world.w;
+  pos = u_world.xy + (pos - u_world.xy) * u_world.z; pos.y -= u_world.w; pos.x -= u_pan;
   vec2 clip = pos / u_res * 2.0 - 1.0;
   gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
 }`;
@@ -474,7 +482,7 @@ class Renderer {
     const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o)); return o; };
     const p = this.prog = gl.createProgram(); gl.attachShader(p, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, FS)); gl.linkProgram(p);
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
-    this.u = {}; for (const n of ['u_res','u_xf','u_sq','u_flip','u_tex','u_ts','u_tsz','u_belly','u_belly2','u_expr','u_expr2','u_hair','u_dress','u_recolor','u_flash','u_alpha','u_tint','u_eyeL','u_eyeR','u_mouth','u_misc','u_box','u_world','u_bel','u_bel2','u_tot','u_glow','u_hang']) this.u[n] = gl.getUniformLocation(p, n);
+    this.u = {}; for (const n of ['u_res','u_xf','u_sq','u_flip','u_tex','u_ts','u_tsz','u_belly','u_belly2','u_expr','u_expr2','u_hair','u_dress','u_recolor','u_flash','u_alpha','u_tint','u_eyeL','u_eyeR','u_mouth','u_misc','u_box','u_world','u_bel','u_bel2','u_tot','u_glow','u_hang','u_pan']) this.u[n] = gl.getUniformLocation(p, n);
     // mesh grid (fine enough for any vertex-side tricks later)
     const verts = [0,0, 1,0, 0,1, 1,0, 1,1, 0,1];
     this.vbo = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STATIC_DRAW);
@@ -502,7 +510,7 @@ class Renderer {
     
     gl.uniform4fv(u.u_eyeL, rig.eyeL); gl.uniform4fv(u.u_eyeR, rig.eyeR); gl.uniform4fv(u.u_mouth, rig.mouth); gl.uniform4fv(u.u_misc, rig.misc); gl.uniform1i(u.u_tex, 0);
     gl.uniform2f(u.u_res, this.W, this.H); gl.uniform2f(u.u_ts, IMG_W, IMG_H); gl.uniform3fv(u.u_tsz, (this.tsz && this.tsz[c.tex]) || [IMG_W, IMG_H, 0]);
-    const hb = hangBlob(c); gl.uniform4fv(u.u_world, c.screenSpace ? [640, 690, 1, 0] : this.world); gl.uniform4f(u.u_xf, c.x + c.offX, c.y + c.offY - hb.lift * c.scale, c.scale, c.rot); gl.uniform2f(u.u_sq, c.sqx, c.sqy); gl.uniform1f(u.u_flip, c.flip);
+    const hb = hangBlob(c); gl.uniform4fv(u.u_world, c.screenSpace ? [640, 690, 1, 0] : this.world); gl.uniform1f(u.u_pan, c.screenSpace ? 0 : (this.panX || 0)); gl.uniform4f(u.u_xf, c.x + c.offX, c.y + c.offY - hb.lift * c.scale, c.scale, c.rot); gl.uniform2f(u.u_sq, c.sqx, c.sqy); gl.uniform1f(u.u_flip, c.flip);
     const st = Math.max(0, c.stage);
     const breath = Math.sin(c.t * 2.1);
     const hs = hangLevel(c), sh = hangShape(hs);
@@ -787,7 +795,7 @@ const BG = {
   draw(ctx, scene, t, opt){
     opt = opt || {};
     if (scene === 'room') {
-      ctx.fillStyle = '#ffd9cb'; ctx.fillRect(-9000, -9000, 19280, 9556); ctx.fillStyle = '#a86b45'; ctx.fillRect(-9000, 556, 19280, 9000);
+      ctx.fillStyle = '#ffd9cb'; ctx.fillRect(-4e7, -4e7, 8e7, 4e7 + 556); ctx.fillStyle = '#a86b45'; ctx.fillRect(-4e7, 556, 8e7, 4e7);
       ctx.drawImage(this.room(), 0, 0);
       for (let i = 0; i < 26; i++) { const x = i * 52, y = 28 + Math.sin(i * 0.9) * 12, a = 0.25 + 0.25 * Math.sin(t * 2 + i); const gr = ctx.createRadialGradient(x, y, 0, x, y, 26); gr.addColorStop(0, `rgba(255,240,200,${a})`); gr.addColorStop(1, 'rgba(255,240,200,0)'); ctx.fillStyle = gr; ctx.fillRect(x - 26, y - 26, 52, 52); }
       return;
@@ -956,17 +964,17 @@ function tween(o, props, dur, ease){
 const EASE = { io: t => t < .5 ? 2*t*t : 1 - Math.pow(-2*t + 2, 2)/2, out: t => 1 - Math.pow(1 - t, 3), in: t => t*t*t, back: t => { const c = 1.7; return 1 + (c+1)*Math.pow(t-1,3) + c*Math.pow(t-1,2); }, lin: t => t };
 function flash(a, ms){ flashEl.style.transition = 'none'; flashEl.style.opacity = a; requestAnimationFrame(() => { flashEl.style.transition = `opacity ${ms||300}ms`; flashEl.style.opacity = 0; }); }
 function shake(a){ G.shake = Math.max(G.shake, a); if (G.frame && a >= 8) G.punch = Math.min(0.07, Math.max(G.punch || 0, a / 650)); }
-function ssToWorld(p){ const w = G.wz || 1; return { x: 640 + (p.x - 640) / w, y: 690 + (p.y + (G.wy || 0) - 690) / w }; }
+function ssToWorld(p){ const w = G.wz || 1; return { x: 640 + (p.x + (G.wx || 0) - 640) / w, y: 690 + (p.y + (G.wy || 0) - 690) / w }; }
 function bellyPos(c){ if (c.screenSpace) { const q = Object.assign({}, c, { screenSpace: false }); Object.setPrototypeOf(q, Object.getPrototypeOf(c)); return ssToWorld(bellyPos(q)); } const s = c.scale, h = hangBlob(c); return { x: c.x + c.offX + (h.cx - 245) * s * c.flip, y: c.y + c.offY - (1342 - Math.min(1300, h.cy + h.ry * 0.25)) * s }; }
 function headPos(c){ if (c.screenSpace) { const q = Object.assign({}, c, { screenSpace: false }); Object.setPrototypeOf(q, Object.getPrototypeOf(c)); return ssToWorld(headPos(q)); } const s = c.scale, l = hangBlob(c).lift; return { x: c.x + c.offX + (253 - 245) * s * c.flip, y: c.y + c.offY - (1342 - 60 + l) * s }; }
 // camera framing for the giant boss: keep her face + the whole swelling belly above the textbox
 // ---- close-up camera: frame every visible woman from the head down to below the lower belly (thighs),
 // as large as the free area between the HUD and the bottom panel allows; pulls back only as bellies grow.
 function frameBox(c){ const h = hangBlob(c), sc = c.scale, IH = 1342, wy_ = yi => c.y + (c.offY || 0) - (IH - yi) * sc;
-  if (hangLevel(c) > 16) { // colossal: frame her head, bust and wings above the belly; the belly runs off the bottom and sides
+  if (G.scene === 'battle' && hangLevel(c) > 16) { // colossal: frame her head, bust and wings above the belly; the belly runs off the bottom and sides
     const top = wy_(10 - h.lift), bt = wy_(h.top); return { top, bot: bt + (bt - top) * 1.25, left: c.x - 330 * sc, right: c.x + 330 * sc }; }
   const top = wy_(38 - h.lift), bot = Math.max(wy_(h.cy + Math.max(h.ry, 0) + 85), wy_(Math.min(h.bot, 1334) + 18));
-  const halfW = Math.max(160, Math.min(h.rx * 1.06, (h.bot - h.top + 300) * 0.95)) * sc; /* giant ones may spill past the screen sides */ return { top, bot, left: c.x - halfW, right: c.x + halfW }; }
+  const halfW = Math.max(160, G.scene === 'room' ? h.rx * 1.12 : Math.min(h.rx * 1.06, (h.bot - h.top + 300) * 0.95)) * sc; /* giant ones may spill past the screen sides */ return { top, bot, left: c.x - halfW, right: c.x + halfW }; }
 // when the final boss becomes colossal, the heroine steps into the near foreground (lower-left, partly cropped)
 function fgHero(){
   const big = G.scene === 'battle' && rival && rival.hang && G.chars.includes(rival) && hangLevel(rival) > (hero.screenSpace ? 12 : 16);
@@ -984,20 +992,26 @@ function autoFrame(dt){
       const aTop = F.top, aBot = G.cmdHidden ? 705 : F.bot;
       const halfW = Math.max(640 - left, right - 640, 50);
       tz = Math.min(F.z, (aBot - aTop) / (bot - top), 625 / halfW);
-      tz = Math.max(F.min || 0.3, tz) * (1 + (G.punch || 0));
+      tz = Math.max(F.fit ? 1e-5 : (F.min || 0.3), tz) * (1 + (G.punch || 0));
       const sTop = 690 + (top - 690) * tz, sBot = 690 + (bot - 690) * tz;
       ty = (sTop + sBot) / 2 - (aTop + aBot) / 2;
-      if (sTop - ty < aTop) ty = sTop - aTop;          // the face always stays in view; huge bellies run off the bottom
+      if (!F.fit && sTop - ty < aTop) ty = sTop - aTop;   // battle/story: the face always stays in view; huge bellies run off the bottom
+      G.fitCam = { z: tz, y: ty };
     }
   }
   G.punch = Math.max(0, (G.punch || 0) - dt * 0.25);
   const k = 1 - Math.exp(-dt * (G.frameFast ? 9 : 3.2));
-  G.wz += (tz - G.wz) * k; G.wy += (ty - G.wy) * k;
+  // automatic (cinematic) camera state
+  if (G.az == null) { G.az = G.wz || 1; G.ay = G.wy || 0; G.ax = G.wx || 0; }
+  { const lz = Math.log(Math.max(1e-6, G.az)), lt = Math.log(Math.max(1e-6, tz)); G.az = Math.exp(lz + (lt - lz) * k); G.ay += (ty - G.ay) * k; G.ax *= (1 - k); }
+  if (G.man) { G.wz = G.man.z; G.wx = G.man.x; G.wy = G.man.y; }   // room: absolute manual camera, persists while she grows
+  else if (G.uv) { const u = G.uv; G.wz = G.az * u.f; G.wx = u.f * G.ax - u.ox - (u.f - 1) * 640; G.wy = u.f * G.ay - u.oy - (u.f - 1) * 690; }   // battle: user view layered on the auto camera
+  else { G.wz = G.az; G.wx = G.ax; G.wy = G.ay; }
   const c = rival; if (c && c.glow) c.glow[3] = Math.max(G.glowHold || 0, c.glow[3] - dt * 1.2);
 }
-const FRAMES = { battle: { z: 1.55, top: 140, bot: 520, min: 0.12 }, home: { z: 1.75, top: 70, bot: 700, min: 0.4 }, story: { z: 1.5, top: 60, bot: 572, min: 0.12 }, room: { z: 1.8, top: 64, bot: 708, min: 0.07 } };
+const FRAMES = { battle: { z: 1.55, top: 140, bot: 520, min: 0.12 }, home: { z: 1.75, top: 70, bot: 700, min: 0.4 }, story: { z: 1.5, top: 60, bot: 572, min: 0.12 }, room: { z: 1.8, top: 64, bot: 708, min: 0.07, fit: true } };
 function hideCmd(h){ G.cmdHidden = h; const el = UI.querySelector('.cmd'); if (el) el.classList.toggle('hid', h); }
-function toScreen(p){ const w = G.wz || 1; p = { x: 640 + (p.x - 640) * w, y: 690 + (p.y - 690) * w - (G.wy || 0) }; const z = G.cam.z; return { x: (p.x - G.cam.fx) * z + 640, y: (p.y - G.cam.fy) * z + 360 }; }
+function toScreen(p){ const w = G.wz || 1; p = { x: 640 + (p.x - 640) * w - (G.wx || 0), y: 690 + (p.y - 690) * w - (G.wy || 0) }; const z = G.cam.z; return { x: (p.x - G.cam.fx) * z + 640, y: (p.y - G.cam.fy) * z + 360 }; }
 function setCam(fx, fy, z, instant){ if (G.frame && z > 1.001) { const w = G.wz || 1; fx = 640 + (fx - 640) * w; fy = 690 + (fy - 690) * w - (G.wy || 0); z = 1 + (z - 1) * 0.4; } G.camT = { fx, fy, z }; if (instant) G.cam = { fx, fy, z }; }
 
 function addParts(x, y, n, type, color){
@@ -1031,18 +1045,19 @@ function frame(now){
   if (G.onUpdate) G.onUpdate(dt);
   // background
   autoFrame(dt);
+  { const cc = document.getElementById('camCtl'); if (cc) cc.style.display = G.scene === 'battle' ? 'flex' : 'none'; gameEl.classList.toggle('camtouch', G.scene === 'battle' || G.scene === 'room'); }
   // the final boss sheds drifting dark motes (the specks from her artwork, animated)
   for (const c of G.chars) if (c.tex === 'nocty' && c.visible && c.alpha > 0.5 && Math.random() < dt * 9) {
     const wx = c.x + rnd(-330, 330) * c.scale / 0.405, wy = c.y - rnd(150, 560) * c.scale / 0.405; const p = toScreen({ x: wx, y: wy });
     G.parts.push({ x: p.x, y: p.y, vx: rnd(-14, 14), vy: rnd(-26, -6), life: rnd(1.6, 3), max: 3, type: 'dot', color: Math.random() < 0.8 ? '#140a16' : '#3a1030', size: rnd(2.5, 6.5) * Math.max(0.5, G.wz), rot: 0, vr: 0, g: -0.01 });
   }
-  const wz = G.wz || 1, wy = G.wy || 0; bgx.setTransform(1,0,0,1,0,0);
-  if (Math.abs(wz - 1) > 0.001 || Math.abs(wy) > 0.5) { if (G.bg !== 'room') { const gr = bgx.createLinearGradient(0, 0, 0, 720); gr.addColorStop(0, '#0d0510'); gr.addColorStop(1, '#22101e'); bgx.fillStyle = gr; bgx.fillRect(0,0,1280,720); } bgx.setTransform(wz, 0, 0, wz, 640*(1-wz), 690*(1-wz) - wy); }
+  const wz = G.wz || 1, wy = G.wy || 0, wx = G.wx || 0; bgx.setTransform(1,0,0,1,0,0);
+  if (Math.abs(wz - 1) > 0.001 || Math.abs(wy) > 0.5 || Math.abs(wx) > 0.5) { if (G.bg !== 'room') { const gr = bgx.createLinearGradient(0, 0, 0, 720); gr.addColorStop(0, '#0d0510'); gr.addColorStop(1, '#22101e'); bgx.fillStyle = gr; bgx.fillRect(0,0,1280,720); } bgx.setTransform(wz, 0, 0, wz, 640*(1-wz) - wx, 690*(1-wz) - wy); }
   BG.draw(bgx, G.bg || 'title', G.t, { theme: G.theme });
   if (G.crack > 0.01) BG.cracks(bgx, G.crack);
   for (const a of G.auras) BG.aura(bgx, a.c.x + a.c.offX, a.c.y - 330, a.color, G.t, a.k);
   for (const c of G.chars) if (c.visible && c.shadow !== false && !c.screenSpace) BG.shadow(bgx, c.x + c.offX, c.y - 4, Math.max(150 * c.scale / 0.45, hangBlob(c).rx * c.scale * 1.15), c.alpha);
-  bgx.setTransform(1,0,0,1,0,0); R.world = [640, 690, wz, wy];
+  bgx.setTransform(1,0,0,1,0,0); R.world = [640, 690, wz, wy]; R.panX = wx;
   if ((G.bdN = (G.bdN || 0) + 1) % 3 === 0) { const [vw, vh] = viewSize(); if (Math.abs(vw / vh - 16 / 9) > 0.01) drawBackdrop(); }
   R.resize(G.dpr || 1); R.clear(); { const big = c => hangLevel(c) > 4 ? 0 : 1; for (const c of [...G.chars].sort((a, b) => big(a) - big(b))) R.draw(c); } // giant bellies behind, so the others stay visible
   drawParts(dt);
@@ -1170,7 +1185,7 @@ function replayModal(){
 
 // ================= SCENES =================
 function goTitle(){
-  G.frame = null; G.wz = 1; G.wy = 0; G.frameBoss = false; G.glowHold = 0; G.cmdHidden = false; G.crack = 0; G.parts = [];
+  G.frame = null; G.wz = 1; G.wy = 0; G.az = 1; G.ay = 0; G.ax = 0; G.uv = null; G.wx = 0; G.man = null; G.frameBoss = false; G.glowHold = 0; G.cmdHidden = false; G.crack = 0; G.parts = [];
   G.scene = 'title'; G.bg = 'title'; G.theme = null; G.auras = []; G.onUpdate = null; setCam(640, 360, 1, true); G.dimT = 0;
   Object.assign(hero, { screenSpace: false, frameIgnore: false, x: 330, y: 730, scale: 0.5, flip: 1, offX: 0, offY: 0, rot: 0, alpha: 1, visible: true, recolor: null, careS: null }); hero.stageTarget = 0; hero.setExpr('smile');
   setChars([hero]); clearUI();
@@ -1251,7 +1266,7 @@ function homeHUD(){
 }
 function stageFromFull(f){ return f >= 80 ? 2 : f >= 40 ? 1 : 0; }
 function goHome(greet, opt){
-  G.wy = 0; G.frameBoss = false; G.glowHold = 0; G.cmdHidden = false; G.crack = 0; G.parts = [];
+  G.wy = 0; G.wx = 0; G.man = null; G.ay = 0; G.ax = 0; G.uv = null; G.frameBoss = false; G.glowHold = 0; G.cmdHidden = false; G.crack = 0; G.parts = [];
   G.frame = FRAMES.home; G.scene = 'home'; G.bg = 'home'; G.theme = null; G.auras = []; G.onUpdate = null; G.dimT = 0; setCam(640, 360, 1, true);
   Object.assign(hero, { screenSpace: false, frameIgnore: false, x: 640, y: 716, scale: 0.44, flip: 1, offX: 0, offY: 0, rot: 0, alpha: 1, visible: true, recolor: null, tint: [1,1,1], careS: null });
   hero.stageTarget = Math.min(2.4, S.full / 40); setChars([hero]); hero.setExpr('smile');
@@ -1367,7 +1382,7 @@ async function massageGame(){
 
 // ---------------- LADDER ----------------
 function goLadder(){
-  G.frame = null; G.wz = 1; G.wy = 0; G.frameBoss = false; G.glowHold = 0; G.cmdHidden = false; G.crack = 0; G.parts = [];
+  G.frame = null; G.wz = 1; G.wy = 0; G.az = 1; G.ay = 0; G.ax = 0; G.uv = null; G.wx = 0; G.man = null; G.frameBoss = false; G.glowHold = 0; G.cmdHidden = false; G.crack = 0; G.parts = [];
   G.scene = 'ladder'; G.bg = 'ladder'; G.onUpdate = null; clearUI(); setCam(640, 360, 1, true); clearBubble();
   const all = RIVALS.concat([BOSS]);
   const availOf = i => i < RIVALS.length ? (i <= S.beaten || S.cleared) : (S.beaten >= RIVALS.length || S.cleared);
@@ -1409,7 +1424,7 @@ function startBattle(i){
   rival = new Character({ x: 1480, y: 694, scale: 0.405, flip: -1, tex: rv.id, name: rv.name });
   if (rv.champ) Object.assign(rival, CHAMP_CFG);
   if (rv.final) Object.assign(rival, BOSS_CFG);
-  B.used = {}; B.combo = false; G.wz = 1; G.wy = 0; G.crack = 0; G.frameBoss = !!rv.final; G.frame = Object.assign({}, FRAMES.battle); G.glowHold = 0; G.cmdHidden = false; if (rv.final) rival.glow = [1, 0.3, 0.4, 0];
+  B.used = {}; B.combo = false; G.wz = 1; G.wy = 0; G.az = 1; G.ay = 0; G.ax = 0; G.uv = null; G.wx = 0; G.man = null; G.crack = 0; G.frameBoss = !!rv.final; G.frame = Object.assign({}, FRAMES.battle); G.glowHold = 0; G.cmdHidden = false; if (rv.final) rival.glow = [1, 0.3, 0.4, 0];
   setChars([hero, rival]); setCam(640, 360, 1, true);
   AudioSys.playBgm(rv.final ? 'final' : rv.boss ? 'boss' : 'battle');
   UI.appendChild($el(`<div class="layer"><div id="bHud">${hpHTML()}</div><div class="cmd panel"><div class="msg" id="bMsg"></div><div class="acts" id="bActs"></div></div></div>`));
@@ -1714,6 +1729,10 @@ async function ending(){
 }
 // ---------------- boot ----------------
 function boot(){
+  battleCamInput();
+  for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(ev, e => e.preventDefault(), { passive: false });
+  document.addEventListener('touchmove', e => { if (e.touches && e.touches.length > 1) e.preventDefault(); }, { passive: false });
+  let lastTouchEnd = 0; document.addEventListener('touchend', e => { const n = Date.now(); if (n - lastTouchEnd < 300 && G.scene === 'room') e.preventDefault(); lastTouchEnd = n; }, { passive: false });
   fit(); load(); AudioSys.vol = Object.assign({}, S.vol);
   const keys = Object.keys(window.IMG_SRC); const imgs = {}; let n = 0;
   const onAll = () => {
@@ -1751,7 +1770,7 @@ const careRank = lv => { let r = CARE_RANKS[0]; for (const k of CARE_RANKS) if (
 const careRankIdx = lv => lv >= 250 ? CARE_RANKS.length - 1 + Math.floor((lv - 200) / 50) : CARE_RANKS.filter(k => lv >= k[0]).length - 1;
 function careCm(c){ const h = hangBlob(c), a = h.rx, b = Math.min(h.ry, (h.bot - h.top) / 2); const C = Math.PI * (3 * (a + b) - Math.sqrt((3 * a + b) * (a + 3 * b))); return C * 165 / 1342 * 1.12; }
 function careSelect(back){
-  G.frame = null; G.wz = 1; G.wy = 0; G.crack = 0; G.parts = []; G.auras = []; G.onUpdate = null; G.dimT = 0; G.scene = 'select'; G.bg = 'room'; setCam(640, 360, 1, true);
+  G.frame = null; G.wz = 1; G.wy = 0; G.az = 1; G.ay = 0; G.ax = 0; G.uv = null; G.wx = 0; G.man = null; G.crack = 0; G.parts = []; G.auras = []; G.onUpdate = null; G.dimT = 0; G.scene = 'select'; G.bg = 'room'; setCam(640, 360, 1, true);
   setChars([]); clearUI(); AudioSys.playBgm('home');
   const all = careAll();
   const el = $el(`<div class="layer"><div class="care-sel panel"><h2>🍰 お腹面倒部屋 <small>― 今日は誰のお腹をお世話する？</small></h2>
@@ -1764,10 +1783,41 @@ function careSelect(back){
   el.querySelector('#csBack').onclick = () => { AudioSys.sfx('cancel'); if (back === 'home') { load(); goHome(false); } else goTitle(); };
 }
 let ROOM = null;
+// manual camera (room): G.man = { z, x, y } in the same terms as G.wz / G.wx / G.wy
+function camNow(){ return G.man || (G.man = { z: G.wz || 1, x: G.wx || 0, y: G.wy || 0 }); }
+function camZoomAt(f, sx, sy){ const m = camNow(); const nz = clamp(m.z * f, 2e-5, 6); const X = (sx + m.x - 640) / m.z + 640, Y = (sy + m.y - 690) / m.z + 690;
+  m.z = nz; m.x = 640 + (X - 640) * nz - sx; m.y = 690 + (Y - 690) * nz - sy; }
+function camPan(dx, dy){ const m = camNow(); m.x -= dx; m.y -= dy; }
+// battle: user view U(s) = f*s + o, applied on top of the cinematic camera (screen space)
+function bvZoomAt(k, sx, sy){ const u = G.uv || (G.uv = { f: 1, ox: 0, oy: 0 }); const nf = clamp(u.f * k, 0.04, 8); k = nf / u.f; u.f = nf; u.ox = k * u.ox + sx * (1 - k); u.oy = k * u.oy + sy * (1 - k); }
+function bvPan(dx, dy){ const u = G.uv || (G.uv = { f: 1, ox: 0, oy: 0 }); u.ox += dx; u.oy += dy; }
+function battleCamInput(){
+  const ctl = $el(`<div id="camCtl" class="cam-ctl b"><button class="cbtn" id="bcIn">＋</button><button class="cbtn" id="bcOut">－</button><button class="cbtn wide" id="bcFit">全体</button></div>`); gameEl.appendChild(ctl);
+  ctl.querySelector('#bcIn').onclick = () => { AudioSys.sfx('cursor'); bvZoomAt(1.3, 640, 380); };
+  ctl.querySelector('#bcOut').onclick = () => { AudioSys.sfx('cursor'); bvZoomAt(1 / 1.3, 640, 380); };
+  ctl.querySelector('#bcFit').onclick = () => { AudioSys.sfx('select'); G.uv = null; };
+  const ps = new Map(); let mode = null, p0 = null, last = null, suppress = 0;
+  const on = () => G.scene === 'battle';
+  const uiHit = el => el && el.closest && el.closest('button, .panel, .cmd, .modal, .dlg, .speech, .vn, #camCtl, #fsBtn, .hpbox');
+  gameEl.addEventListener('pointerdown', e => { if (!on()) return; const p = clientToStage(e.clientX, e.clientY); ps.set(e.pointerId, p);
+    if (ps.size >= 2) { mode = 'pinch'; suppress = 1; const [a, b] = [...ps.values()]; p0 = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, c: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } }; e.preventDefault(); }
+    else if (e.pointerType === 'mouse' && e.button !== 0) { mode = 'pan'; last = p; e.preventDefault(); }
+    else if (e.pointerType !== 'mouse' && !uiHit(e.target)) { mode = 'pan'; last = p; }
+    else mode = null; }, true);
+  gameEl.addEventListener('pointermove', e => { if (!on() || !ps.has(e.pointerId)) return; const p = clientToStage(e.clientX, e.clientY); ps.set(e.pointerId, p);
+    if (mode === 'pinch' && ps.size >= 2) { const [a, b] = [...ps.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y) || 1, c = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      bvZoomAt(d / p0.d, c.x, c.y); bvPan(c.x - p0.c.x, c.y - p0.c.y); p0 = { d, c }; }
+    else if (mode === 'pan' && last) { if (Math.hypot(p.x - last.x, p.y - last.y) > 0.5) { bvPan(p.x - last.x, p.y - last.y); last = p; } } }, true);
+  const up = e => { ps.delete(e.pointerId); if (!ps.size) { mode = null; if (suppress) setTimeout(() => { suppress = 0; }, 80); } else if (mode === 'pinch') { mode = 'pan'; last = [...ps.values()][0]; } };
+  gameEl.addEventListener('pointerup', up, true); gameEl.addEventListener('pointercancel', up, true);
+  gameEl.addEventListener('click', e => { if (suppress && on()) { e.stopPropagation(); e.preventDefault(); } }, true);   // a pinch never triggers a command button
+  gameEl.addEventListener('contextmenu', e => { if (on()) e.preventDefault(); });
+  gameEl.addEventListener('wheel', e => { if (!on()) return; e.preventDefault(); const p = clientToStage(e.clientX, e.clientY); bvZoomAt(Math.exp(-clamp(e.deltaY, -200, 200) * 0.0018), p.x, p.y); }, { passive: false });
+}
 function goRoom(w, back){
   const d = careGet(w.id);
-  G.wy = 0; G.frameBoss = false; G.glowHold = 0; G.cmdHidden = false; G.crack = 0; G.parts = []; G.auras = []; G.dimT = 0;
-  G.frame = FRAMES.room; G.scene = 'room'; G.bg = 'room'; G.theme = null; setCam(640, 360, 1, true);
+  G.wy = 0; G.wx = 0; G.man = null; G.ay = 0; G.ax = 0; G.uv = null; G.frameBoss = false; G.glowHold = 0; G.cmdHidden = false; G.crack = 0; G.parts = []; G.auras = []; G.dimT = 0;
+  G.man = null; G.wx = 0; G.frame = FRAMES.room; G.scene = 'room'; G.bg = 'room'; G.theme = null; setCam(640, 360, 1, true);
   const c = w.id === 'heroine' ? hero : new Character({ tex: w.id, name: w.name });
   Object.assign(c, { x: 640, y: 712, scale: 0.44, flip: 1, offX: 0, offY: 0, rot: 0, alpha: 1, visible: true, recolor: null, tint: [1,1,1], name: w.name, stageTarget: 0, stage: 0, careS: d.s, hang: null });
   if (w.id === 'nocty') Object.assign(c, { wing: true, jig: 1.6, bulge: 0.1 }); else if (w.id === 'luna') Object.assign(c, { bulge: 0.1, jig: 1.4 });
@@ -1793,12 +1843,13 @@ function renderRoom(){
       <button class="btn sub small" id="rReset">🔄 リセット</button>
       <button class="btn sub small" id="rBack">${R_.back === 'home' ? '🏠 おうちへ' : '🏠 タイトルへ'}</button>
     </div>
-    <div class="mas-tip" id="rTip">お腹をドラッグしてなでなでしてあげよう！</div></div>`);
+    <div class="cam-ctl"><button class="cbtn" id="cIn">＋</button><button class="cbtn" id="cOut">－</button><button class="cbtn wide" id="cFit">全身</button></div>
+    <div class="mas-tip" id="rTip">お腹をドラッグでなでなで ／ 2本指でズーム・移動</div></div>`);
   UI.appendChild(el);
   const $ = q => el.querySelector(q);
   $('#rFeed').onclick = () => { if (R_.busy) return; AudioSys.sfx('select'); roomFeedMenu(); };
   $('#rFeast').onclick = () => { if (R_.busy) return; AudioSys.sfx('select'); roomEat({ em: '🍱', n: '大ごちそう', g: 2.2 }, true); };
-  $('#rRub').onclick = () => { AudioSys.sfx('cursor'); toast('お腹の上で、ゆっくりくるくる円を描くようにドラッグするとなかよし度アップ＆ちょっとずつ大きくなるよ ♥', 3200); };
+  $('#rRub').onclick = () => { AudioSys.sfx('cursor'); toast('お腹の上で、ゆっくりくるくる円を描くようにドラッグするとなかよし度アップ＆ちょっとずつ大きくなるよ ♥<br>カメラ：2本指ピンチでズーム／2本指・空いている所のドラッグで移動（PCはホイール＋右ドラッグ）。「全身」で全体表示に戻るよ', 4200); };
   $('#rSel').onclick = () => { AudioSys.sfx('cancel'); roomLeave(); careSelect(R_.back); };
   $('#rReset').onclick = () => { if (R_.busy) return; if (!confirm(`${R_.w.name}のお腹の育成データをリセットしますか？`)) return; AudioSys.sfx('cancel');
     R_.d = { s: 0, aff: 0, best: R_.d.best, meals: 0 }; R_.target = 0; R_.grownTo = 0; R_.lvShown = 1; carePut(R_.w.id, R_.d); toast('リセットしました'); };
@@ -1807,13 +1858,32 @@ function renderRoom(){
   const z = $('#rubZ'), hand = $('#rH');
   const inBelly = p => { const c = R_.c, h = hangBlob(c), k = c.scale * G.wz * G.cam.z; const ctr = toScreen({ x: c.x + (h.cx - 245) * c.scale, y: c.y - (1342 - h.cy) * c.scale });
     const dx = (p.x - ctr.x) / Math.max(30, h.rx * k), dy = (p.y - ctr.y) / Math.max(30, h.ry * k); return { ok: dx * dx + dy * dy < 1.15, ctr }; };
-  z.onpointerdown = e => { R_.down = true; z.setPointerCapture(e.pointerId); R_.lastA = null; R_.lastP = null; };
-  z.onpointerup = z.onpointercancel = () => { R_.down = false; hand.style.display = 'none'; };
-  z.onpointermove = e => { const p = clientToStage(e.clientX, e.clientY); hand.style.left = p.x + 'px'; hand.style.top = p.y + 'px';
-    if (!R_.down) return; const b = inBelly(p); hand.style.display = b.ok ? 'block' : 'none'; if (!b.ok) { R_.lastA = null; return; }
+  // input: 1 finger on the belly = rub, 1 finger on empty space / right or middle mouse = pan, 2 fingers = pinch zoom + pan, wheel = zoom
+  const ptrs = new Map(); let mode = null, pinch0 = null, panLast = null;
+  const sp = e => clientToStage(e.clientX, e.clientY);
+  z.onpointerdown = e => { e.preventDefault(); try { z.setPointerCapture(e.pointerId); } catch (_) {} const p = sp(e); ptrs.set(e.pointerId, p);
+    if (ptrs.size >= 2) { R_.down = false; hand.style.display = 'none'; mode = 'pinch'; const [a, b] = [...ptrs.values()]; pinch0 = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, c: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } }; }
+    else if (e.pointerType === 'mouse' && e.button !== 0) { mode = 'pan'; panLast = p; }
+    else if (inBelly(p).ok) { mode = 'rub'; R_.down = true; R_.lastA = null; R_.lastP = null; }
+    else { mode = 'pan'; panLast = p; } };
+  z.onpointermove = e => { const p = sp(e); if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, p);
+    if (e.pointerType === 'mouse' || mode === 'rub') { hand.style.left = p.x + 'px'; hand.style.top = p.y + 'px'; }
+    if (mode === 'pinch' && ptrs.size >= 2) { const [a, b] = [...ptrs.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y) || 1, c = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      camZoomAt(d / pinch0.d, c.x, c.y); camPan(c.x - pinch0.c.x, c.y - pinch0.c.y); pinch0 = { d, c }; return; }
+    if (mode === 'pan') { camPan(p.x - panLast.x, p.y - panLast.y); panLast = p; return; }
+    if (mode !== 'rub' || !R_.down) { if (e.pointerType === 'mouse') hand.style.display = inBelly(p).ok ? 'block' : 'none'; return; }
+    const b = inBelly(p); hand.style.display = b.ok ? 'block' : 'none'; if (!b.ok) { R_.lastA = null; return; }
     const a = Math.atan2(p.y - b.ctr.y, p.x - b.ctr.x);
     if (R_.lastA !== null) { let da = a - R_.lastA; if (da > Math.PI) da -= 2 * Math.PI; if (da < -Math.PI) da += 2 * Math.PI; R_.rubSpd = R_.rubSpd * 0.85 + Math.abs(da) * 60 * 0.15; }
     R_.lastA = a; if (R_.lastP) { R_.c.box.v += (p.x - R_.lastP.x) * 1.4; R_.c.boy.v += (p.y - R_.lastP.y) * 4; } R_.lastP = p; };
+  z.onpointerup = z.onpointercancel = e => { ptrs.delete(e.pointerId);
+    if (!ptrs.size) { mode = null; R_.down = false; if (e.pointerType !== 'mouse') hand.style.display = 'none'; }
+    else if (mode === 'pinch') { mode = 'pan'; panLast = [...ptrs.values()][0]; } };
+  z.oncontextmenu = e => e.preventDefault();
+  z.addEventListener('wheel', e => { e.preventDefault(); const p = sp(e); camZoomAt(Math.exp(-clamp(e.deltaY, -200, 200) * 0.0018), p.x, p.y); }, { passive: false });
+  $('#cIn').onclick = () => { AudioSys.sfx('cursor'); camZoomAt(1.3, 640, 380); };
+  $('#cOut').onclick = () => { AudioSys.sfx('cursor'); camZoomAt(1 / 1.3, 640, 380); };
+  $('#cFit').onclick = () => { AudioSys.sfx('select'); if (G.man) { G.az = G.man.z; G.ax = G.man.x; G.ay = G.man.y; } G.man = null; };
   roomHud();
 }
 function roomLeave(){ const R_ = ROOM; if (!R_) return; carePut(R_.w.id, R_.d); if (R_.c === hero) { hero.careS = null; } ROOM = null; G.onUpdate = null; clearBubble(); }
