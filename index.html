@@ -1673,7 +1673,7 @@ async function feed(d){
   const b = toScreen(bellyPos(hero)); addParts(b.x, b.y, 14, 'heart', '#ff4f8b'); AudioSys.sfx('boing');
   toast(`${d.em} ${d.n}！ HP+${d.hp} パワー+${d.atk} 弾力+${d.def} 満腹+${d.full}`);
   await vp; clearBubble();
-  if (Math.floor(hero.stageTarget + 0.001) > prevSt) { AudioSys.sfx('grow'); await wait(400); await say(hero, 'h_grow1', { expr: 'surprised' }); }
+  if (Math.floor(hero.stageTarget + 0.001) > prevSt) { AudioSys.sfx('grow'); }
   hero.setExpr('smile'); renderHome();
 }
 
@@ -1785,7 +1785,7 @@ async function battleIntro(){
   else if (!(S.seen && S.seen['pre_' + B.rv.id])) { await playScene('pre_' + B.rv.id, { keepStage: true }); G.scene = 'battle'; refreshHUD(); }
   else { if (B.rv.champ && !B.rv.ura) { G.dimT = 0.4; await AudioSys.voice('mc_final'); G.dimT = 0; } await say(rival, B.rv.id + '_intro', { expr: 'smug' }); }
   if (B.h.stage > 0) { setMsg(`満腹パワーで ${HERO_NAME} はお腹第${B.h.stage}形態からスタート！`); }
-  await say(hero, B.h.stage > 0 ? 'h_grow1' : 'h_ready', { expr: 'determined' });
+  await say(hero, 'h_ready', { expr: 'determined' });
   banner('FIGHT!', 'お腹バトル　レディー…ファイト！'); AudioSys.sfx('gong'); AudioSys.voice('mc_ready'); shake(8);
   await wait(1700); playerTurn();
 }
@@ -1962,7 +1962,7 @@ async function growCut(c, stage, isHero){
   setMsg(isHero ? `${HERO_NAME} のお腹ゲージがMAX！ お腹がどんどん大きくなっていく…！` : `${B.rv.name} のお腹が…巨大化していく！`);
   if (!isHero) { AudioSys.voice(champ ? 'mc_queen' : 'mc_stage'); await wait(champ ? 3200 : 1900); }
   AudioSys.sfx('grow'); c.setExpr(isHero ? 'determined' : 'angry');
-  const vp = say(c, isHero ? `h_grow${stage}` : `${B.rv.id}_grow${stage}`, { keep: true, side: isHero });
+  const vp = (isHero && stage === 1) ? Promise.resolve() : say(c, isHero ? `h_grow${stage}` : `${B.rv.id}_grow${stage}`, { keep: true, side: isHero });
   const pulses = champ ? 10 : 6;
   for (let i = 0; i < pulses; i++) { c.flash = champ ? [0.85, 0.7, 1, 0.45] : [1, 0.85, 0.95, 0.35]; c.bounce(0.3); shake((champ ? 6 : 3) + i*(champ ? 2 : 1)); if (champ && i % 3 === 2) { AudioSys.sfx('rumble'); flash(0.25, 200); } await wait(220); }
   if (champ) { // growth in a few violent surges while the camera pulls back to show the whole arena
