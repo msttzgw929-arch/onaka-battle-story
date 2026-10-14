@@ -526,31 +526,46 @@ const enemyMat = new THREE.ShaderMaterial({
     map: { value: null }, frame: { value: new THREE.Vector4(0, 0, .1, .2) }, aspect: { value: 384 / 816 },
     bx: { value: .5 }, uRange: { value: new THREE.Vector2(0, 1) }, uVmax: { value: 1 },
     srcC: { value: new THREE.Vector2(0, .645) }, srcR: { value: new THREE.Vector2(.108, .085) },
-    outC: { value: new THREE.Vector2(0, .645) }, outR: { value: new THREE.Vector2(.108, .085) }, grow: { value: 0 },
+    outC: { value: new THREE.Vector2(0, .645) }, outR: { value: new THREE.Vector2(.108, .085) }, outRT: { value: .085 }, grow: { value: 0 },
     light: { value: new THREE.Color(1, 1, 1) }, fogCol: { value: FOG_COL }, fogD: { value: .034 }, hurt: { value: 0 }, uLump: { value: 0 }, texel: { value: new THREE.Vector2(1 / 3840, 1 / 4080) }
   },
   vertexShader: `uniform vec2 uRange; uniform float uVmax; varying vec2 vUv; varying float vD;
     void main(){ vUv=vec2(mix(uRange.x,uRange.y,uv.x), uv.y*uVmax); vec4 mv=modelViewMatrix*vec4(position,1.); vD=length(mv.xyz); gl_Position=projectionMatrix*mv; }`,
-  fragmentShader: `uniform sampler2D map; uniform vec4 frame; uniform float aspect,bx,grow,fogD,hurt,uLump; uniform vec2 srcC,srcR,outC,outR,texel; uniform vec3 light,fogCol;
+  fragmentShader: `uniform sampler2D map; uniform vec4 frame; uniform float aspect,bx,grow,fogD,hurt,uLump; uniform vec2 srcC,srcR,outC,outR,texel; uniform float outRT; uniform vec3 light,fogCol;
     varying vec2 vUv; varying float vD;
+    vec4 tex(vec2 uv){ if(uv.x<.003||uv.x>.997||uv.y<.002||uv.y>.998) return vec4(0.); return texture2D(map, frame.xy+uv*frame.zw); }
     void main(){
       vec2 q=vec2((vUv.x-bx)*aspect, vUv.y);
-      float lumpSh=0.;
+      vec4 base=tex(vec2(q.x/aspect+bx,q.y));
+      vec2 ql=q; float lumpSh=0.;
       if(uLump>0.){ // moving lumps on the lower belly (swallow scene)
         for(int i=0;i<4;i++){ float fi=float(i);
-          vec2 bc=outC+outR*vec2(sin(uLump*(.9+fi*.37)+fi*1.7)*.55, -.25+cos(uLump*(1.3+fi*.29)+fi*2.3)*.4);
-          vec2 d=q-bc; float w=exp(-dot(d,d)/(.09*outR.x*outR.x));
-          q-=d*w*.45; lumpSh+=w; }
+          vec2 bc=outC+vec2(outR.x*sin(uLump*(.9+fi*.37)+fi*1.7)*.55, -outR.y*(.35+.3*cos(uLump*(1.3+fi*.29)+fi*2.3)));
+          vec2 d=q-bc; float w=exp(-dot(d,d)/(.08*outR.x*outR.x));
+          ql-=d*w*.30; lumpSh+=w; }
       }
-      vec2 e=(q-outC)/outR; float r=length(e); vec2 sq; float shade=1.;
-      if(r<1.){ float h=pow(r,mix(1.,1.18,grow)); sq=srcC+(r>1e-4? e/r*h : vec2(0.))*srcR;
-        shade=1.-grow*(.22*smoothstep(.55,1.,r)*(e.y<0.?1.:.35)) + grow*.06*(1.-r)*step(0.,e.y);
-      } else { vec2 m=srcC+e*srcR; float w=smoothstep(1.,1.55,r); sq=mix(m,q,w); }
-      vec2 uv=vec2(sq.x/aspect+bx, sq.y);
-      if(uv.x<.003||uv.x>.997||uv.y<.002||uv.y>.998) discard;
-      vec4 c=texture2D(map, frame.xy+uv*frame.zw);
+      vec2 d0=ql-outC; float ryy=d0.y>0.?outRT:outR.y;
+      float rxx=outR.x*(1.+.10*grow*clamp(-d0.y/outR.y,0.,1.));
+      vec2 e=vec2(d0.x/rxx,d0.y/ryy); float r=length(e);
+      vec4 c=base; float shadeAll=1.;
+      if(grow>0.&&r<1.05){
+        float aa=max(fwidth(r)*1.5,.004);
+        float inside=1.-smoothstep(1.-aa,1.,r);
+        // opaque belly layer: fabric sampled from the original dress belly, re-shaded
+        vec2 ef=vec2(d0.x/rxx, d0.y/ryy);
+        vec2 sq=srcC+ef*srcR*mix(1.,.8,smoothstep(0.,.4,grow));
+        vec4 bt=tex(vec2(sq.x/aspect+bx,sq.y));
+        float sh=1.-.36*smoothstep(.45,1.,r)*(e.y<.2?1.:.35)-.10*clamp(-e.y,0.,1.);
+        vec2 hl=e-vec2(-.35,.38); sh+=.10*exp(-dot(hl,hl)*3.)+.10*lumpSh;
+        vec3 bc=bt.rgb*sh;
+        float ol=smoothstep(1.-aa*2.-.03,1.-aa*.5,r)*smoothstep(.6,.2,e.y);
+        bc=mix(bc,vec3(.2,.2,.24),ol*.85);
+        float topBlend=smoothstep(.35,.95,e.y)*smoothstep(.55,1.,r)*step(.5,base.a);
+        float w=inside*smoothstep(0.,.25,grow)*(1.-topBlend)*step(.3,bt.a);
+        c=vec4(mix(base.rgb,bc,w),max(base.a,w));
+      }
       if(c.a<.04) discard;
-      vec3 col=c.rgb*shade*(1.+.10*lumpSh); col=pow(col,vec3(2.2));
+      vec3 col=c.rgb; col=pow(col,vec3(2.2));
       col*=light; col=mix(col, col*vec3(1.4,.6,.6), hurt);
       col*=smoothstep(.0,.6,c.a);
       float f=1.-exp(-pow(fogD*vD,2.)); col=mix(col,pow(fogCol,vec3(2.2))*.9,f);
@@ -564,22 +579,19 @@ enemyShadow.rotation.x = -Math.PI / 2;
 scene.add(enemyMesh, enemyShadow);
 
 // belly target shape per level (q-space; follows the red dashed outlines of the reference, then grows without limit)
-const BELLY = [ // [level, cy, rx, ry]
-  [1, .645, .108, .085], [2, .60, .166, .12], [3, .57, .19, .142]];
+// belly shape per level in q-space (follows the red dashed outlines; bottom extends past the knees at Lv.3, hides the feet by ~Lv.6, then grows forever)
+const BELLY = [ // [level, cy, rx, ryTop, ryBottom]
+  [1, .645, .108, .085, .085], [2, .62, .167, .10, .20], [3, .60, .197, .11, .34]];
 function bellyShape(L) {
-  let cy, rx, ry;
+  let cy, rx, ryT, ryB;
   if (L <= 3) {
-    const i = L < 2 ? 0 : 1, t = smooth(0, 1, (L - BELLY[i][0]));
-    const a = BELLY[i], b = BELLY[i + 1];
-    cy = lerp(a[1], b[1], t); rx = lerp(a[2], b[2], t); ry = lerp(a[3], b[3], t);
-    if (L < 2) { const tt = L - 1; cy = lerp(a[1], b[1], tt); rx = lerp(a[2], b[2], tt); ry = lerp(a[3], b[3], tt); }
-    else { const tt = L - 2; cy = lerp(a[1], b[1], tt); rx = lerp(a[2], b[2], tt); ry = lerp(a[3], b[3], tt); }
+    const i = L < 2 ? 0 : 1, tt = clamp(L - BELLY[i][0], 0, 1), A = BELLY[i], B = BELLY[i + 1];
+    cy = lerp(A[1], B[1], tt); rx = lerp(A[2], B[2], tt); ryT = lerp(A[3], B[3], tt); ryB = lerp(A[4], B[4], tt);
   } else {
-    const k = Math.pow(L - 3, 1.12);
-    rx = .19 + .05 * k; ry = .142 + .042 * k; cy = .57 - .018 * k;
+    const k = Math.pow(L - 3, 1.1);
+    rx = .197 + .055 * k; ryT = .11 + .03 * k; ryB = .34 + .09 * k; cy = Math.max(.60, ryB);
   }
-  cy = Math.max(cy, ry * .92 + .02);
-  return { cy, rx, ry };
+  return { cy, rx, ry: ryB, ryT, ryB };
 }
 const E = { pos: new THREE.Vector3(), active: false, anim: 'walk', frame: 0, ft: 0, flinchT: 0, stuck: 0, ghost: 0, stepPhase: 0, lastFrameStep: -1, popoT: 3, visible: false, theta: 0, W: H_ENEMY * 384 / 816, shape: bellyShape(1) };
 function setEnemyFrame(anim, i) {
@@ -592,11 +604,11 @@ function setEnemyFrame(anim, i) {
 function updateEnemyMesh(level) {
   const s = bellyShape(level); E.shape = s;
   const u = enemyMat.uniforms, asp = u.aspect.value;
-  const grow = clamp((level - 1) / 1.2, 0, 1);
+  const grow = clamp((level - 1) / .6, 0, 1);
   u.grow.value = grow;
   u.srcC.value.set(0, .645); u.srcR.value.set(.108, .085);
-  u.outC.value.set(0, s.cy); u.outR.value.set(s.rx, s.ry);
-  const hu = Math.max(.52, (s.rx * 1.6) / asp + .02), vmax = Math.max(1.0, s.cy + s.ry * 1.6);
+  u.outC.value.set(0, s.cy); u.outR.value.set(s.rx, s.ryB); u.outRT.value = s.ryT;
+  const hu = Math.max(.52, (s.rx * 1.15) / asp + .03), vmax = Math.max(1.0, s.cy + s.ryT + .03);
   const bx = u.bx.value;
   u.uRange.value.set(bx - hu, bx + hu); u.uVmax.value = vmax;
   const theta = Math.atan2(camera.position.x - E.pos.x, camera.position.z - E.pos.z); E.theta = theta;
@@ -853,7 +865,7 @@ function enemyHit(a, b) {
   const asp = 384 / 816, bx = enemyMat.uniforms.bx.value;
   const u = p.dot(right) / E.W + .5, v = p.y / H_ENEMY;
   const qx = (u - bx) * asp, s = E.shape;
-  const eb = Math.pow(qx / s.rx, 2) + Math.pow((v - s.cy) / s.ry, 2);
+  const eb = Math.pow(qx / s.rx, 2) + Math.pow((v - s.cy) / (v > s.cy ? s.ryT : s.ryB), 2);
   if (eb < 1.3) return 'belly';
   if (Math.abs(u - .5) < .38 && v > 0 && v < 1) return 'body';
   return null;
@@ -1078,11 +1090,11 @@ function setupEaten(level) {
   const mat = enemyMat.clone(); const u = mat.uniforms;
   u.map.value = TEX.eaten; u.frame.value.set(0, 0, 1, 1); u.bx.value = .5; u.fogD.value = 0; u.hurt.value = 0;
   u.aspect.value = IMG.eaten.width / IMG.eaten.height;
-  const asp = u.aspect.value, sh = bellyShape(level), SRC = .58, off = SRC - .645;
+  const asp = u.aspect.value, sh = bellyShape(level), SRC = .63, off = 0;
   u.srcC.value.set(0, SRC); u.srcR.value.set(.105, .08);
-  u.outC.value.set(0, Math.max(sh.cy + off, sh.ry * .92 + .02)); u.outR.value.set(Math.max(sh.rx, .105), Math.max(sh.ry, .08));
-  u.grow.value = clamp((level - 1) / 1.2, 0, 1); u.uLump.value = .01; u.light.value.setRGB(.82, .85, .95);
-  const hu = Math.max(.52, (u.outR.value.x * 1.6) / asp + .02), vmax = Math.max(1, u.outC.value.y + u.outR.value.y * 1.6);
+  u.outC.value.set(0, Math.max(sh.cy + off, sh.ryB)); u.outR.value.set(Math.max(sh.rx, .105), Math.max(sh.ryB, .08)); u.outRT.value = Math.max(sh.ryT, .08);
+  u.grow.value = Math.max(.6, clamp((level - 1) / 1.2, 0, 1)); u.uLump.value = .01; u.light.value.setRGB(.82, .85, .95);
+  const hu = Math.max(.52, (u.outR.value.x * 1.25) / asp + .03), vmax = Math.max(1, u.outC.value.y + u.outRT.value + .03);
   u.uRange.value.set(.5 - hu, .5 + hu); u.uVmax.value = vmax;
   const W = H_ENEMY * asp;
   if (eatMesh) eatScene.remove(eatMesh);
