@@ -33,7 +33,7 @@ html,body{touch-action:none;overscroll-behavior:none;-webkit-touch-callout:none;
 #msg{position:absolute;top:30%;width:100%;text-align:center;font-size:44px;color:#fff;letter-spacing:.3em;text-shadow:0 0 16px #a00,0 0 4px #000;opacity:0;transition:opacity .6s}
 #msg.on{opacity:1}
 #dist{position:absolute;top:70px;left:50%;transform:translateX(-50%);font-size:13px;color:#c99;letter-spacing:.2em;text-shadow:0 0 4px #000}
-#grain{position:fixed;inset:-20px;pointer-events:none;z-index:6;opacity:.09;mix-blend-mode:overlay}
+#grain{display:none}
 #vig{position:fixed;inset:0;pointer-events:none;z-index:4;background:radial-gradient(ellipse at center,rgba(0,0,0,0) 45%,rgba(0,0,0,.75) 100%)}
 #danger{position:fixed;inset:0;pointer-events:none;z-index:4;background:radial-gradient(ellipse at center,rgba(80,0,0,0) 35%,rgba(120,0,0,.85) 100%);opacity:0}
 #flash{position:fixed;inset:0;pointer-events:none;z-index:7;background:#fff;opacity:0}
@@ -160,11 +160,11 @@ const canvas = $('gl');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: !MOBILE, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, MOBILE ? 1 : 1.5));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.15;
+renderer.toneMappingExposure = 1.35;
 const scene = new THREE.Scene();
 const FOG_COL = new THREE.Color(0x070a12);
 scene.background = FOG_COL.clone();
-scene.fog = new THREE.FogExp2(FOG_COL, 0.034);
+scene.fog = new THREE.FogExp2(FOG_COL, 0.027);
 const camera = new THREE.PerspectiveCamera(72, 1, 0.05, 600);
 scene.add(camera);
 function resize() {
@@ -400,7 +400,7 @@ function buildWorld() {
   const mm = new THREE.Mesh(new THREE.CylinderGeometry(400, 400, 110, 64, 1, true), new THREE.MeshBasicMaterial({ map: mt, transparent: true, side: THREE.BackSide, fog: false, depthWrite: false }));
   mm.position.y = 30; scene.add(mm);
   // lights
-  scene.add(new THREE.HemisphereLight(0x3a4a6a, 0x0a0806, .55));
+  scene.add(new THREE.HemisphereLight(0x3a4a6a, 0x0a0806, .8));
   const moonL = new THREE.DirectionalLight(0x8090c0, .35); moonL.position.set(-200, 230, -300); scene.add(moonL);
 }
 function house(x, z, w, d, h, wood) {
@@ -527,7 +527,7 @@ const enemyMat = new THREE.ShaderMaterial({
     bx: { value: .5 }, uRange: { value: new THREE.Vector2(0, 1) }, uVmax: { value: 1 },
     srcC: { value: new THREE.Vector2(0, .645) }, srcR: { value: new THREE.Vector2(.108, .085) },
     outC: { value: new THREE.Vector2(0, .645) }, outR: { value: new THREE.Vector2(.108, .085) }, outRT: { value: .085 }, grow: { value: 0 },
-    light: { value: new THREE.Color(1, 1, 1) }, fogCol: { value: FOG_COL }, fogD: { value: .034 }, hurt: { value: 0 }, uLump: { value: 0 }, texel: { value: new THREE.Vector2(1 / 3840, 1 / 4080) }
+    light: { value: new THREE.Color(1, 1, 1) }, fogCol: { value: FOG_COL }, fogD: { value: .027 }, hurt: { value: 0 }, uLump: { value: 0 }, texel: { value: new THREE.Vector2(1 / 3840, 1 / 4080) }
   },
   vertexShader: `uniform vec2 uRange; uniform float uVmax; varying vec2 vUv; varying float vD;
     void main(){ vUv=vec2(mix(uRange.x,uRange.y,uv.x), uv.y*uVmax); vec4 mv=modelViewMatrix*vec4(position,1.); vD=length(mv.xyz); gl_Position=projectionMatrix*mv; }`,
@@ -594,18 +594,20 @@ enemyShadow.rotation.x = -Math.PI / 2;
 scene.add(enemyMesh, enemyShadow);
 
 // belly target shape per level (q-space; follows the red dashed outlines of the reference, then grows without limit)
-// belly shape per level in q-space (follows the red dashed outlines; bottom extends past the knees at Lv.3, hides the feet by ~Lv.6, then grows forever)
+// belly shape per level in q-space (height units). Keyframes measured from the user's reference stages A/B/C,
+// interpolated linearly (continuous, no jumps), then extrapolated forever beyond C.
 const BELLY = [ // [level, cy, rx, ryTop, ryBottom]
-  [1, .645, .108, .085, .085], [2, .62, .167, .10, .20], [3, .60, .197, .11, .34]];
+  [1, .645, .108, .085, .085],
+  [2, .59, .164, .13, .125],
+  [3.5, .48, .293, .27, .225],
+  [5, .40, .40, .32, .32]];
 function bellyShape(L) {
-  let cy, rx, ryT, ryB;
-  if (L <= 3) {
-    const i = L < 2 ? 0 : 1, tt = clamp(L - BELLY[i][0], 0, 1), A = BELLY[i], B = BELLY[i + 1];
-    cy = lerp(A[1], B[1], tt); rx = lerp(A[2], B[2], tt); ryT = lerp(A[3], B[3], tt); ryB = lerp(A[4], B[4], tt);
-  } else {
-    const k = Math.pow(L - 3, 1.1);
-    rx = .197 + .055 * k; ryT = .11 + .03 * k; ryB = .34 + .09 * k; cy = Math.max(.60, ryB);
-  }
+  L = Math.max(1, L);
+  let i = 0; while (i < BELLY.length - 2 && L > BELLY[i + 1][0]) i++;
+  const A = BELLY[i], B = BELLY[i + 1], t = (L - A[0]) / (B[0] - A[0]);
+  let cy = lerp(A[1], B[1], t), rx = lerp(A[2], B[2], t), ryT = lerp(A[3], B[3], t), ryB = lerp(A[4], B[4], t);
+  if (L > 5) { const k = L - 5; cy = .40; rx = .40 + .07 * k; ryT = .32 + .04 * k; ryB = .32 + .06 * k; }
+  cy = Math.max(cy, ryB - .005);
   return { cy, rx, ry: ryB, ryT, ryB };
 }
 const E = { pos: new THREE.Vector3(), active: false, anim: 'walk', frame: 0, ft: 0, flinchT: 0, stuck: 0, ghost: 0, stepPhase: 0, lastFrameStep: -1, popoT: 3, visible: false, theta: 0, W: H_ENEMY * 384 / 816, shape: bellyShape(1) };
@@ -619,7 +621,7 @@ function setEnemyFrame(anim, i) {
 function updateEnemyMesh(level) {
   const s = bellyShape(level); E.shape = s;
   const u = enemyMat.uniforms, asp = u.aspect.value;
-  const grow = clamp((level - 1) / .6, 0, 1);
+  const grow = clamp((level - 1) / .5, 0, 1);
   u.grow.value = grow;
   u.srcC.value.set(0, .645); u.srcR.value.set(.108, .085);
   u.outC.value.set(0, s.cy); u.outR.value.set(s.rx, s.ryB); u.outRT.value = s.ryT;
@@ -1017,7 +1019,7 @@ function updateEnemy(dt) {
   const danger = clamp(1 - (dist - 2) / 22, 0, 1);
   G.heartT -= dt; if (danger > .05 && G.heartT <= 0) { Audio_.heart(.3 + danger * .9); G.heartT = 60 / (62 + danger * 100); }
   $('danger').style.opacity = (danger * .7).toFixed(3);
-  P.shake = Math.max(P.shake, danger * .25);
+  P.shake = Math.max(P.shake, danger * .06);
   $('dist').textContent = dist < 30 ? '…' + '気配'.padEnd(Math.round(danger * 6) + 2, '…') : '';
   updateEnemyMesh(G.level); enemyLight();
   // catch
@@ -1027,7 +1029,7 @@ function updateEnemy(dt) {
 function updateLevel(dt) {
   G.level = G.lockLevel ?? (1 + G.t / 38);
   const lv = Math.floor(G.level);
-  if (lv > G.lastLv) { G.lastLv = lv; msg(`お腹が膨らんだ… Lv.${lv}`, 2.4); Audio_.rumble(); P.shake = 1; }
+  if (lv > G.lastLv) { G.lastLv = lv; msg(`お腹が膨らんでいく… Lv.${lv}`, 2.4); Audio_.rumble(); }
   $('bellyV').textContent = 'Lv.' + G.level.toFixed(1); $('bellyB').style.width = ((G.level % 1) * 100) + '%';
 }
 let lampT = 0;
@@ -1045,7 +1047,7 @@ function updateLamps(dt, t) {
     lightPool.forEach((pl, i) => { const n = near[i]; if (n) { pl.position.copy(n[0].pos); pl.color.set(n[0].col); pl._l = n[0]; } else pl._l = null; });
   }
   lightPool.forEach(pl => pl.intensity = pl._l ? (pl._l.vend ? 6 : 34) * pl._l.curI : 0);
-  flashlight.intensity = P.flash ? 95 : 0;
+  flashlight.intensity = P.flash ? 140 : 0;
 }
 
 // ------------------------------------------------------------ 2D fx (intro + jumpscare)
@@ -1066,7 +1068,7 @@ function drawIntro(dt) {
   const m = META.intro, img = IMG.intro, cw = img.width / m.cols, ch = img.height / m.rows, ii = fi | 0;
   o.drawImage(img, (ii % m.cols) * cw, Math.floor(ii / m.cols) * ch, cw, ch, 0, 0, 382, 814);
   o.globalCompositeOperation = 'source-atop';
-  const flick = Math.random() < .06 ? .25 : 0;
+  const flick = 0;
   o.fillStyle = `rgba(10,16,34,${(.5 + flick).toFixed(2)})`; o.fillRect(0, 0, 382, 814);
   const lg = o.createLinearGradient(0, 0, 0, 814); lg.addColorStop(0, 'rgba(0,0,0,.35)'); lg.addColorStop(.45, 'rgba(0,0,0,0)'); lg.addColorStop(1, 'rgba(0,0,0,.55)'); o.fillStyle = lg; o.fillRect(0, 0, 382, 814);
   fctx.save();
@@ -1134,7 +1136,6 @@ let last = performance.now(), clock = 0, gT = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   let dt = Math.min(.05, (now - last) / 1000) * G.timeScale; last = now; clock += dt;
-  gT -= dt; if (gT <= 0) { updGrain(); gT = .06; }
   if (!META || !TEX.walk) { renderer.render(scene, camera); return; }
   updateLamps(dt, clock);
   if (G.state === 'title') { titleCam(clock); }
